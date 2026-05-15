@@ -47,32 +47,19 @@ GOOGLE_API_KEY=<your-gemini-api-key>
 
 DB/seeker-web이 기본 위치가 아니라면 `DATABASE_URL`, `SEEKER_WEB_BASE_URL`도 조정.
 
-### 3. MySQL에 `seeker_ai` DB 생성
-
-```powershell
-docker exec -it seeker-mysql mysql -uroot -proot -e "CREATE DATABASE IF NOT EXISTS seeker_ai CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-```
-
-또는 호스트에서 직접:
-
-```powershell
-mysql -h 127.0.0.1 -u root -proot -e "CREATE DATABASE IF NOT EXISTS seeker_ai CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-```
-
-### 4. 마이그레이션
-
-```powershell
-.venv\Scripts\python.exe -m alembic upgrade head
-```
-
-→ `conversations`, `messages`, `alembic_version` 테이블이 생성된다.
-
-### 5. 서버 실행
+### 3. 서버 실행
 
 ```powershell
 .venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
 ```
 
+서버가 처음 뜰 때 자동으로:
+- `seeker_ai` 데이터베이스가 없으면 생성한다 (`docker-compose`의 `seeker-mysql`을 그대로 사용)
+- Alembic 마이그레이션을 head까지 적용한다 (`conversations`, `messages`, `alembic_version` 테이블 생성)
+
+즉 docker-compose나 MySQL을 별도로 손볼 필요 없이 바로 굴러간다. 멱등이라 두 번째 부팅부터는 no-op.
+
+확인 위치:
 - 헬스체크: http://127.0.0.1:8000/healthz
 - Swagger: http://127.0.0.1:8000/docs
 
