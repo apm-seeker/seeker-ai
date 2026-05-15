@@ -8,6 +8,11 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "aiomysql>=0.2.0",
+    "pymysql>=1.1.1",
+    "cryptography>=43.0.0",
+    "alembic>=1.14.0",
 ]
 
 [project.optional-dependencies]
