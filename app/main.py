@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from app.api import conversations as conversations_router
 from app.config import get_settings
 from app.db.session import dispose_engine
+from app.tools.seeker_client import dispose_seeker_client
 
 settings = get_settings()
 
@@ -12,6 +13,7 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
+    await dispose_seeker_client()
     await dispose_engine()
 
 
