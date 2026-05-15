@@ -17,6 +17,7 @@ from app.llm.message_mapper import (
 from app.llm.prompts import now_ms, render_system_prompt
 from app.repositories.conversation_repo import ConversationRepository
 from app.repositories.message_repo import MessageRepository
+from app.services.title_service import schedule_title_generation
 from app.utils.ids import new_id
 
 logger = logging.getLogger(__name__)
@@ -119,6 +120,7 @@ class ChatService:
                     logger.warning("failed to touch conversation %s", conversation_id)
 
             if not errored:
+                schedule_title_generation(conversation_id, user_id)
                 yield _sse("done", {})
 
 
