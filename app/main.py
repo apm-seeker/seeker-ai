@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -12,6 +13,8 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if settings.google_api_key:
+        os.environ.setdefault("GOOGLE_API_KEY", settings.google_api_key)
     yield
     await dispose_seeker_client()
     await dispose_engine()

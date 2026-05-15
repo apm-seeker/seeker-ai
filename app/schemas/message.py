@@ -1,9 +1,13 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 MessageRole = Literal["user", "assistant", "tool", "system"]
+
+
+class MessageCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=20000)
 
 
 class MessageRead(BaseModel):

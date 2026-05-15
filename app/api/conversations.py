@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import current_user_id, db_session
@@ -10,7 +11,8 @@ from app.schemas.conversation import (
     ConversationRead,
     ConversationUpdate,
 )
-from app.schemas.message import MessageList, MessageRead
+from app.schemas.message import MessageCreate, MessageList, MessageRead
+from app.services.chat_service import ChatService
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -101,4 +103,27 @@ async def list_messages(
     return MessageList(
         items=[MessageRead.model_validate(m) for m in items],
         total=total,
+    )
+
+
+@router.post("/{conversation_id}/messages")
+async def send_message(
+    conversation_id: str,
+    payload: MessageCreate,
+    session: AsyncSession = Depends(db_session),
+    user_id: str = Depends(current_user_id),
+) -> StreamingResponse:
+    conv_repo = ConversationRepository(session)
+    conversation = await conv_repo.get(conversation_id, user_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="conversation not found")
+
+    chat = ChatService()
+    return StreamingResponse(
+        chat.stream_chat(conversation_id, user_id, payload.content),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
