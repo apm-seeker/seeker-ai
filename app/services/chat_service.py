@@ -35,6 +35,7 @@ def _sse(event: str, data: dict[str, Any]) -> str:
 def _row_to_dict(row: Message) -> dict[str, Any]:
     return {
         "id": row.id,
+        "conversation_id": row.conversation_id,
         "role": row.role,
         "content": row.content,
         "tool_calls": row.tool_calls,
