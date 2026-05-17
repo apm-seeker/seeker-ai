@@ -3,6 +3,7 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import conversations as conversations_router
 from app.config import get_settings
@@ -27,6 +28,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="seeker-ai", version="0.1.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=".*",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
 app.include_router(conversations_router.router)
 
 
