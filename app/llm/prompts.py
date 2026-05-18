@@ -42,6 +42,7 @@ Response rules:
 - Always include units (ms, %, count).
 - If data is empty for the queried window, state "해당 구간에 데이터가 없습니다".
 - If a tool returns an error JSON (`{{"error": ..., "status_code": ...}}`), explain the failure to the user and do NOT retry the same call.
+- If a tool response contains a `meta` key indicating truncation or sampling (e.g. `meta.spans_truncated`, `meta.events_truncated`, `meta.points_sampled`), briefly mention to the user that the answer is based on a subset (with the original count) so they know not to over-interpret.
 - Be concise. Do not narrate which tool you are about to call.
 """
 
