@@ -4,6 +4,7 @@ from typing import Annotated, Any
 from langchain_core.tools import tool
 
 from app.schemas.seeker import TraceDetailsRequest
+from app.tools.compaction import compact_scatter, compact_trace_view
 from app.tools.seeker_client import SeekerWebError, get_seeker_client
 
 
@@ -83,14 +84,19 @@ async def get_agent_scatter(
     Use when the user wants to see individual requests over time, identify outliers,
     or examine which traces are slow / errored.
 
-    Returns JSON: summary {totalCount, errorCount, errorRate}, points[] with
-    traceId, spanId, startTime (epoch ms), elapsedTime (ms), statusCode, isError.
+    Returns JSON: summary {total_count, error_count, error_rate}, points[] with
+    trace_id, span_id, start_time (epoch ms), elapsed_time (ms), status_code, is_error.
+
+    If points exceed 100, the response is sampled (all errored points preserved,
+    successes uniformly sampled) and a `meta.points_sampled` block reports the
+    original total. The `summary` always reflects the full unsampled totals.
     """
     client = get_seeker_client()
     try:
-        return _dump(
-            await client.get_agent_scatter(agent_id, start_time_ms, end_time_ms)
+        scatter = await client.get_agent_scatter(
+            agent_id, start_time_ms, end_time_ms
         )
+        return json.dumps(compact_scatter(scatter), ensure_ascii=False, default=str)
     except SeekerWebError as exc:
         return _err(exc)
 
@@ -220,14 +226,88 @@ async def get_trace_detail(
     Use when the user wants to inspect what happened in a specific request — full
     span tree, method-level events, exceptions, agent hops, latency breakdown.
 
-    Returns JSON: traceId, startTime, duration, statusCode, exceptionClass, agents[],
-    spans[] (each with spanId, parentSpanId, agentName, uri, exceptionInfo, events[]).
-    Build the tree by linking child.parentSpanId to parent.spanId. Root spans have
-    parentSpanId == '-1'.
+    Returns JSON: trace_id, start_time, duration, status_code, exception_class, agents[],
+    spans[] (each with span_id, parent_span_id, agent_name, uri, exception_info, events[]).
+    Build the tree by linking child.parent_span_id to parent.span_id. Root spans have
+    parent_span_id == '-1'.
+
+    If a trace has more than 50 spans, or any span has more than 30 events, the
+    response is truncated with errored spans/events preserved first and remaining
+    slots filled by elapsed_time desc. When this happens a `meta` block is included
+    showing original/returned counts.
     """
     client = get_seeker_client()
     try:
-        return _dump(await client.get_trace_detail(trace_id))
+        view = await client.get_trace_detail(trace_id)
+        return json.dumps(
+            compact_trace_view(view), ensure_ascii=False, default=str
+        )
+    except SeekerWebError as exc:
+        return _err(exc)
+
+
+@tool
+async def get_metric_agents() -> str:
+    """Return the list of agents that report JVM metrics.
+
+    Use this when the user asks which services have JVM metric data, or as a
+    discovery step before calling get_jvm_metric_timeseries when the user
+    refers to a service by name rather than agent ID.
+
+    Returns JSON: agents[] with id, agentName, agentGroup, applicationName.
+    """
+    client = get_seeker_client()
+    try:
+        return _dump(await client.get_metric_agents())
+    except SeekerWebError as exc:
+        return _err(exc)
+
+
+@tool
+async def get_jvm_metric_timeseries(
+    agent_id: Annotated[str, "Agent identifier from get_metric_agents."],
+    metric_name: Annotated[
+        str,
+        "Exactly one of: 'jvm.memory', 'jvm.gc', 'jvm.thread', 'jvm.class'. "
+        "Other values will be rejected by the server.",
+    ],
+    start_time_ms: Annotated[int, "Start of time range, epoch milliseconds."],
+    end_time_ms: Annotated[int, "End of time range, epoch milliseconds."],
+    interval_ms: Annotated[
+        int | None,
+        "Bucket width in ms. Leave null to let the server pick a sensible interval "
+        "based on the time range; only set if the user explicitly asks for a resolution.",
+    ] = None,
+) -> str:
+    """Return JVM metric time series for one agent and one metric group.
+
+    Use this for JVM heap/memory usage, GC counts/time, thread counts, or
+    loaded class counts over a time range.
+
+    The response splits the chosen metric group into multiple series, one per
+    (fieldName, tags) combination. For example metric_name='jvm.memory' yields
+    series like heap_used / heap_committed / non_heap_used (and others). For
+    metric_name='jvm.gc' the tags identify GC name/type, and the fields include
+    cumulative counts and time totals.
+
+    Returns JSON: intervalMs and series[] where each series has:
+      - fieldName (e.g. heap_used)
+      - type: 'GAUGE' (interpret value as-is) or 'CUMULATIVE' (interpret
+        consecutive points' difference as rate/increment)
+      - tags: extra labels distinguishing same-fieldName series
+      - points: list of {t (epoch ms), v (numeric)}
+    """
+    client = get_seeker_client()
+    try:
+        return _dump(
+            await client.get_metric_timeseries(
+                agent_id=agent_id,
+                metric_name=metric_name,
+                start_time_ms=start_time_ms,
+                end_time_ms=end_time_ms,
+                interval_ms=interval_ms,
+            )
+        )
     except SeekerWebError as exc:
         return _err(exc)
 
@@ -240,4 +320,6 @@ SEEKER_TOOLS = [
     get_url_stats,
     search_traces,
     get_trace_detail,
+    get_metric_agents,
+    get_jvm_metric_timeseries,
 ]

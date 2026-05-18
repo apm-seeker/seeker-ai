@@ -182,3 +182,40 @@ class TraceView(_CamelModel):
     exception_class: str | None = Field(default=None, alias="exceptionClass")
     agents: list[AgentRef] = []
     spans: list[Span] = []
+
+
+# --- /metrics/agents ---
+
+
+class MetricAgent(_CamelModel):
+    id: str
+    agent_name: str | None = Field(default=None, alias="agentName")
+    agent_group: str | None = Field(default=None, alias="agentGroup")
+    application_name: str | None = Field(default=None, alias="applicationName")
+
+
+class MetricAgents(_CamelModel):
+    agents: list[MetricAgent] = []
+
+
+# --- /metrics/timeseries ---
+
+MetricName = Literal["jvm.memory", "jvm.gc", "jvm.thread", "jvm.class"]
+MetricSeriesType = Literal["GAUGE", "CUMULATIVE"]
+
+
+class MetricPoint(_CamelModel):
+    t: int
+    v: float
+
+
+class MetricSeries(_CamelModel):
+    field_name: str = Field(alias="fieldName")
+    type: str = "GAUGE"
+    tags: dict[str, str] = {}
+    points: list[MetricPoint] = []
+
+
+class MetricTimeseries(_CamelModel):
+    interval_ms: int = Field(default=0, alias="intervalMs")
+    series: list[MetricSeries] = []
