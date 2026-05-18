@@ -5,6 +5,8 @@ import httpx
 from app.config import get_settings
 from app.schemas.seeker import (
     AgentMetrics,
+    MetricAgents,
+    MetricTimeseries,
     Scatter,
     Topology,
     TraceDetails,
@@ -119,6 +121,29 @@ class SeekerWebClient:
     async def get_trace_detail(self, trace_id: str) -> TraceView:
         data = await self._request("GET", f"/traces/{trace_id}")
         return TraceView.model_validate(data)
+
+    async def get_metric_agents(self) -> MetricAgents:
+        data = await self._request("GET", "/metrics/agents")
+        return MetricAgents.model_validate(data)
+
+    async def get_metric_timeseries(
+        self,
+        agent_id: str,
+        metric_name: str,
+        start_time_ms: int,
+        end_time_ms: int,
+        interval_ms: int | None = None,
+    ) -> MetricTimeseries:
+        params: dict[str, Any] = {
+            "agentId": agent_id,
+            "metricName": metric_name,
+            "startTime": start_time_ms,
+            "endTime": end_time_ms,
+        }
+        if interval_ms is not None:
+            params["intervalMs"] = interval_ms
+        data = await self._request("GET", "/metrics/timeseries", params=params)
+        return MetricTimeseries.model_validate(data)
 
 
 _client: SeekerWebClient | None = None

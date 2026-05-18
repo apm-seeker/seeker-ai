@@ -232,6 +232,72 @@ async def get_trace_detail(
         return _err(exc)
 
 
+@tool
+async def get_metric_agents() -> str:
+    """Return the list of agents that report JVM metrics.
+
+    Use this when the user asks which services have JVM metric data, or as a
+    discovery step before calling get_jvm_metric_timeseries when the user
+    refers to a service by name rather than agent ID.
+
+    Returns JSON: agents[] with id, agentName, agentGroup, applicationName.
+    """
+    client = get_seeker_client()
+    try:
+        return _dump(await client.get_metric_agents())
+    except SeekerWebError as exc:
+        return _err(exc)
+
+
+@tool
+async def get_jvm_metric_timeseries(
+    agent_id: Annotated[str, "Agent identifier from get_metric_agents."],
+    metric_name: Annotated[
+        str,
+        "Exactly one of: 'jvm.memory', 'jvm.gc', 'jvm.thread', 'jvm.class'. "
+        "Other values will be rejected by the server.",
+    ],
+    start_time_ms: Annotated[int, "Start of time range, epoch milliseconds."],
+    end_time_ms: Annotated[int, "End of time range, epoch milliseconds."],
+    interval_ms: Annotated[
+        int | None,
+        "Bucket width in ms. Leave null to let the server pick a sensible interval "
+        "based on the time range; only set if the user explicitly asks for a resolution.",
+    ] = None,
+) -> str:
+    """Return JVM metric time series for one agent and one metric group.
+
+    Use this for JVM heap/memory usage, GC counts/time, thread counts, or
+    loaded class counts over a time range.
+
+    The response splits the chosen metric group into multiple series, one per
+    (fieldName, tags) combination. For example metric_name='jvm.memory' yields
+    series like heap_used / heap_committed / non_heap_used (and others). For
+    metric_name='jvm.gc' the tags identify GC name/type, and the fields include
+    cumulative counts and time totals.
+
+    Returns JSON: intervalMs and series[] where each series has:
+      - fieldName (e.g. heap_used)
+      - type: 'GAUGE' (interpret value as-is) or 'CUMULATIVE' (interpret
+        consecutive points' difference as rate/increment)
+      - tags: extra labels distinguishing same-fieldName series
+      - points: list of {t (epoch ms), v (numeric)}
+    """
+    client = get_seeker_client()
+    try:
+        return _dump(
+            await client.get_metric_timeseries(
+                agent_id=agent_id,
+                metric_name=metric_name,
+                start_time_ms=start_time_ms,
+                end_time_ms=end_time_ms,
+                interval_ms=interval_ms,
+            )
+        )
+    except SeekerWebError as exc:
+        return _err(exc)
+
+
 SEEKER_TOOLS = [
     get_service_topology,
     get_agent_metrics,
@@ -240,4 +306,6 @@ SEEKER_TOOLS = [
     get_url_stats,
     search_traces,
     get_trace_detail,
+    get_metric_agents,
+    get_jvm_metric_timeseries,
 ]

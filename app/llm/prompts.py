@@ -27,6 +27,10 @@ Tool routing:
 - URL 별 통계 랭킹 => get_url_stats
 - 조건에 맞는 trace 찾기 (에러, 느린, 특정 URL) => search_traces
 - 특정 trace 전체 콜스택 분석 => get_trace_detail
+- JVM 메트릭이 있는 agent 목록 => get_metric_agents
+- JVM 힙/GC/스레드/클래스 추이 (시계열) => get_jvm_metric_timeseries
+  - metric_name 값은 정확히 다음 중 하나: "jvm.memory", "jvm.gc", "jvm.thread", "jvm.class"
+  - 응답 series 중 type="GAUGE"는 값 그대로(예: 현재 heap 사용량), type="CUMULATIVE"는 누적값이므로 인접 점의 차이(증분/속도)로 해석
 
 Notes:
 - An agent's `agent_id` is the random ID from topology. Use empty string `""` for the synthetic USER node (external traffic origin).
