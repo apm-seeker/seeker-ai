@@ -4,7 +4,16 @@ from typing import Annotated, Any
 from langchain_core.tools import tool
 
 from app.schemas.seeker import TraceDetailsRequest
-from app.tools.compaction import compact_scatter, compact_trace_view
+from app.tools.compaction import (
+    compact_agent_metrics,
+    compact_jvm_timeseries,
+    compact_metric_agents,
+    compact_scatter,
+    compact_topology,
+    compact_trace_histogram,
+    compact_trace_view,
+    compact_url_stats,
+)
 from app.tools.seeker_client import SeekerWebError, get_seeker_client
 
 
@@ -15,8 +24,8 @@ def _err(exc: SeekerWebError) -> str:
     )
 
 
-def _dump(obj: Any) -> str:
-    return obj.model_dump_json(by_alias=False)
+def _emit(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, ensure_ascii=False, default=str)
 
 
 @tool
@@ -37,10 +46,16 @@ async def get_service_topology(
     - nodes[]: each agent with agentId, agentName, agentType, errorRate (0-1)
               (a synthetic node with agentId='' and agentName='USER' represents external traffic)
     - edges[]: each connection with fromAgentId, toAgentId, tps, avgLatency (ms), errorRate
+    - insights: pre-computed summary with `node_count`, `edge_count`,
+      `top_edges_by_tps` (top 5), `top_edges_by_avg_latency` (top 5),
+      `high_error_services` (anything with error_rate >= 5%), and `flags`
+      (e.g. "test2:error_rate_high", "USER->test1:edge_latency_slow").
+      Prefer quoting from insights instead of re-sorting raw nodes/edges.
     """
     client = get_seeker_client()
     try:
-        return _dump(await client.get_topology(start_time_ms, end_time_ms))
+        topo = await client.get_topology(start_time_ms, end_time_ms)
+        return _emit(compact_topology(topo))
     except SeekerWebError as exc:
         return _err(exc)
 
@@ -59,13 +74,17 @@ async def get_agent_metrics(
     Use when the user asks about the performance of a specific service, e.g. error rate,
     average latency, p90/p95/p99 latency, request count.
 
-    Returns JSON: totalCount, errorCount, errorRate (0-1), p99, p95, p90 (all in ms).
+    Returns JSON: totalCount, errorCount, errorRate (0-1), p99, p95, p90 (all in ms),
+    plus an `insights` block with severity buckets (`ok`/`high`/`critical` for error
+    and latency_p95/p99), p95/avg ratio, and `flags` such as "p95_slow", "heavy_tail",
+    "error_rate_high".
     """
     client = get_seeker_client()
     try:
-        return _dump(
-            await client.get_agent_metrics(agent_id, start_time_ms, end_time_ms)
+        metrics = await client.get_agent_metrics(
+            agent_id, start_time_ms, end_time_ms
         )
+        return _emit(compact_agent_metrics(metrics))
     except SeekerWebError as exc:
         return _err(exc)
 
@@ -85,18 +104,21 @@ async def get_agent_scatter(
     or examine which traces are slow / errored.
 
     Returns JSON: summary {total_count, error_count, error_rate}, points[] with
-    trace_id, span_id, start_time (epoch ms), elapsed_time (ms), status_code, is_error.
+    trace_id, span_id, start_time (epoch ms), elapsed_time (ms), status_code, is_error,
+    plus `insights` containing `latency_stats_ms` (count/min/max/avg/p50/p95/p99),
+    `error_window` (first/last error timestamps), and `flags`.
 
     If points exceed 100, the response is sampled (all errored points preserved,
     successes uniformly sampled) and a `meta.points_sampled` block reports the
-    original total. The `summary` always reflects the full unsampled totals.
+    original total. The `summary` and `insights.latency_stats_ms` always reflect
+    the full unsampled totals.
     """
     client = get_seeker_client()
     try:
         scatter = await client.get_agent_scatter(
             agent_id, start_time_ms, end_time_ms
         )
-        return json.dumps(compact_scatter(scatter), ensure_ascii=False, default=str)
+        return _emit(compact_scatter(scatter))
     except SeekerWebError as exc:
         return _err(exc)
 
@@ -116,15 +138,17 @@ async def get_trace_histogram(
     or wants to see how latencies are spread across time bins.
 
     Returns JSON: interval, boundaries[] (8 latency buckets from 0ms to 8000+ms),
-    bins[] (each with timestamp and counts[] aligned to boundaries).
+    bins[] (each with timestamp and counts[] aligned to boundaries), and `insights`
+    with `total_count`, `peak_bin` {timestamp, count, share_pct}, `slow_share_pct`
+    (>= 1s buckets), `critical_share_pct` (>= 3s buckets), `trend`
+    (rising/falling/stable), and `flags` like "slow_tail_present".
     """
     client = get_seeker_client()
     try:
-        return _dump(
-            await client.get_trace_histogram(
-                start_time_ms, end_time_ms, interval_ms
-            )
+        hist = await client.get_trace_histogram(
+            start_time_ms, end_time_ms, interval_ms
         )
+        return _emit(compact_trace_histogram(hist))
     except SeekerWebError as exc:
         return _err(exc)
 
@@ -139,11 +163,15 @@ async def get_url_stats(
     Use when the user asks which endpoints are most-called, slowest, or have most failures.
 
     Returns JSON: rows[] with url, totalCount, failureCount (statusCode >= 400),
-    avgMs (mean latency), p95Ms (95th percentile latency in ms).
+    avgMs (mean latency), p95Ms (95th percentile latency in ms), and `insights` with
+    `top_by_calls`, `top_by_p95`, `top_by_failure_rate`, `heavy_tail_urls` (p95/avg >= 3),
+    and `flags` summarising counts (e.g. "3_urls_p95_slow", "1_url_error_rate_critical").
+    Quote insights directly — do not re-sort rows yourself.
     """
     client = get_seeker_client()
     try:
-        return _dump(await client.get_url_stats(start_time_ms, end_time_ms))
+        stats = await client.get_url_stats(start_time_ms, end_time_ms)
+        return _emit(compact_url_stats(stats))
     except SeekerWebError as exc:
         return _err(exc)
 
@@ -210,7 +238,8 @@ async def search_traces(
             limit=limit,
             offset=offset,
         )
-        return _dump(await client.search_traces(request))
+        result = await client.search_traces(request)
+        return result.model_dump_json(by_alias=False)
     except SeekerWebError as exc:
         return _err(exc)
 
@@ -227,21 +256,22 @@ async def get_trace_detail(
     span tree, method-level events, exceptions, agent hops, latency breakdown.
 
     Returns JSON: trace_id, start_time, duration, status_code, exception_class, agents[],
-    spans[] (each with span_id, parent_span_id, agent_name, uri, exception_info, events[]).
-    Build the tree by linking child.parent_span_id to parent.span_id. Root spans have
-    parent_span_id == '-1'.
+    spans[] (each with span_id, parent_span_id, agent_name, uri, exception_info, events[]),
+    and `insights` containing `per_agent_latency` (total_ms / self_ms / span_count per agent),
+    `critical_path` (longest root-to-leaf chain by elapsed_time), `slowest_spans` (top 3),
+    `errored_spans` (up to 5 with truncated exception info), and `flags` such as
+    "has_exception", "deep_call_stack", "trace_duration_slow".
 
-    If a trace has more than 50 spans, or any span has more than 30 events, the
-    response is truncated with errored spans/events preserved first and remaining
-    slots filled by elapsed_time desc. When this happens a `meta` block is included
-    showing original/returned counts.
+    Build the tree by linking child.parent_span_id to parent.span_id. Root spans have
+    parent_span_id == '-1'. If a trace has more than 50 spans, or any span has more
+    than 30 events, the response is truncated with errored spans/events preserved first
+    and remaining slots filled by elapsed_time desc; a `meta` block then reports
+    original/returned counts.
     """
     client = get_seeker_client()
     try:
         view = await client.get_trace_detail(trace_id)
-        return json.dumps(
-            compact_trace_view(view), ensure_ascii=False, default=str
-        )
+        return _emit(compact_trace_view(view))
     except SeekerWebError as exc:
         return _err(exc)
 
@@ -254,11 +284,13 @@ async def get_metric_agents() -> str:
     discovery step before calling get_jvm_metric_timeseries when the user
     refers to a service by name rather than agent ID.
 
-    Returns JSON: agents[] with id, agentName, agentGroup, applicationName.
+    Returns JSON: agents[] with id, agentName, agentGroup, applicationName,
+    plus `insights.agent_count`.
     """
     client = get_seeker_client()
     try:
-        return _dump(await client.get_metric_agents())
+        agents = await client.get_metric_agents()
+        return _emit(compact_metric_agents(agents))
     except SeekerWebError as exc:
         return _err(exc)
 
@@ -296,18 +328,21 @@ async def get_jvm_metric_timeseries(
         consecutive points' difference as rate/increment)
       - tags: extra labels distinguishing same-fieldName series
       - points: list of {t (epoch ms), v (numeric)}
+    Plus an `insights` block with `per_series` (each carrying stats {count,min,max,
+    avg,p50,p95,p99}, `last` value, and `trend`), `heap_pressure` (when memory
+    fields are present), `gc_summary` (when GC fields are present), and `flags`
+    such as "heap_pressure_high" / "gc_overhead_high".
     """
     client = get_seeker_client()
     try:
-        return _dump(
-            await client.get_metric_timeseries(
-                agent_id=agent_id,
-                metric_name=metric_name,
-                start_time_ms=start_time_ms,
-                end_time_ms=end_time_ms,
-                interval_ms=interval_ms,
-            )
+        ts = await client.get_metric_timeseries(
+            agent_id=agent_id,
+            metric_name=metric_name,
+            start_time_ms=start_time_ms,
+            end_time_ms=end_time_ms,
+            interval_ms=interval_ms,
         )
+        return _emit(compact_jvm_timeseries(ts, metric_name=metric_name))
     except SeekerWebError as exc:
         return _err(exc)
 
